@@ -1,0 +1,89 @@
+// DRAFT - not compiled or wired up yet (Phase 3).
+//
+// This is the contract between the control plane (Java/Spring) and the data
+// plane (Go). Both sides generate code from this one file. The messages mirror
+// data-plane/internal/config/config.go field for field, so the JSON file used
+// in Phase 1 and the gRPC snapshot used in Phase 3 describe the same thing.
+syntax = "proto3";
+
+package apigw.v1;
+
+option go_package = "apigw/dataplane/gen/apigw/v1;apigwv1";
+option java_package = "dev.apigw.controlplane.proto";
+option java_multiple_files = true;
+
+service ConfigDiscovery {
+  // The data plane opens one long-lived stream. The first request identifies
+  // the node; later requests ACK or NACK versions the server pushed.
+  // The server sends the full current snapshot immediately, then a new one
+  // whenever the config changes (state-of-the-world, like xDS SotW).
+  rpc Subscribe(stream SubscribeRequest) returns (stream ConfigUpdate);
+}
+
+message SubscribeRequest {
+  string node_id = 1;
+
+  // Set after the node has validated and applied a snapshot.
+  uint64 ack_version = 2;
+
+  // Set instead of ack_version when the node rejected a snapshot (it keeps
+  // serving its previous one). The control plane surfaces this in node status.
+  uint64 nack_version = 3;
+  string nack_error = 4;
+}
+
+message ConfigUpdate {
+  ConfigSnapshot snapshot = 1;
+}
+
+message ConfigSnapshot {
+  // Monotonic, assigned by the control plane when it builds the snapshot.
+  uint64 version = 1;
+  // sha256 hex of the canonical snapshot content; lets nodes and operators
+  // verify they hold the same thing.
+  string checksum = 2;
+
+  repeated Service services = 3;
+  repeated Route routes = 4;
+}
+
+message Service {
+  string name = 1;
+  LoadBalancer lb_algorithm = 2;
+  repeated Target targets = 3;
+  uint32 connect_timeout_ms = 4;
+  uint32 response_header_timeout_ms = 5;
+  uint32 request_timeout_ms = 6;
+}
+
+enum LoadBalancer {
+  LOAD_BALANCER_UNSPECIFIED = 0; // treated as ROUND_ROBIN
+  LOAD_BALANCER_ROUND_ROBIN = 1;
+  LOAD_BALANCER_WEIGHTED = 2;
+}
+
+message Target {
+  string url = 1;
+  uint32 weight = 2;
+}
+
+message Route {
+  string name = 1;
+  string service = 2;
+  repeated string hosts = 3;
+  repeated string methods = 4;
+  repeated PathMatch paths = 5;
+  bool strip_prefix = 6;
+  bool preserve_host = 7;
+  int32 priority = 8;
+}
+
+message PathMatch {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_EXACT = 1;
+    TYPE_PREFIX = 2;
+  }
+  Type type = 1;
+  string value = 2;
+}
